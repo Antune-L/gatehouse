@@ -1,0 +1,49 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    # NOTE: native runners per architecture (no `--target`): the mcp:proxy
+    # sidecar is named after the host triple (see package.json).
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Gatehouse v__VERSION__'
+          releaseDraft: true
+          releaseBody: |
+            Pick the `.dmg` matching your Mac: `aarch64` for Apple Silicon, `x64` for Intel.
+
+            These builds are not signed with an Apple Developer ID, so Gatekeeper
+            blocks the app on first launch. After dragging Gatehouse to
+            `/Applications`, clear the quarantine flag once:
+
+            ```
+            xattr -dr com.apple.quarantine /Applications/Gatehouse.app
+            ```

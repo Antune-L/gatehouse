@@ -1,0 +1,41 @@
+<!doctype html>
+<html>
+  <head>
+    <!-- macOS app icon template: 1024x1024 transparent canvas, 824x824
+         rounded square (Apple grid), corner radius ~185px. Rendered with
+         Playwright (omitBackground) then fed to `npx tauri icon`. -->
+    <style>
+      html, body { margin: 0; padding: 0; background: transparent; }
+      #c {
+        width: 1024px;
+        height: 1024px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #plate {
+        width: 824px;
+        height: 824px;
+        border-radius: 185px;
+        background: radial-gradient(circle at 50% 38%, #2a1e0d 0%, #0d0d0f 78%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="c">
+      <div id="plate">
+        <svg width="520" height="520" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <rect x="2" y="2" width="28" height="28" rx="7" fill="#1c1408"/>
+          <rect x="2" y="2" width="28" height="28" rx="7" stroke="#e0a04a" stroke-width="1" stroke-opacity="0.5"/>
+          <path d="M10 22V13a6 6 0 0 1 12 0v9" stroke="#e0a04a" stroke-width="2.2" stroke-linecap="round"/>
+          <path d="M8 22h16" stroke="#e0a04a" stroke-width="2.2" stroke-linecap="round"/>
+          <circle cx="16" cy="15" r="1.8" fill="#e0a04a"/>
+        </svg>
+      </div>
+    </div>
+  </body>
+</html>

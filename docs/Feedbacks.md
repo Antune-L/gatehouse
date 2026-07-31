@@ -1,0 +1,39 @@
+- [x] Adapter la taille de la cellule au type de la donnée, e.g actuellement si on a un timestamp, la value est crop par défaut, l'utilisateur doit agrandir la taille de la colonne
+- [x] Enlever la possibilité de faire des liens sur la vue Relations, à mon avis ça doit venir de la bibliothèque. En effet l'utilisateur va essayer de bidouiller, sauf que ça fait rien. On peut mettre en readonly ?
+	- [x] Les liens sont trop "rigides", il faudrait qu'ils soient plus courbés
+- [~] En haut à gauche, on a un vide entre la gauche et le nom de l'app — ANNULÉ (espace réservé aux boutons macOS natifs)
+- [x] Dans la vue query manuelle, rendre par défaut la partie History et Saved, collapsed, ça prends de l'espace
+	- [x] Dans la même vue, pouvoir manipuler l'espace disponible de la partie écrivable et le résultat en bas
+- [x] La modale New Connection — reconstruite selon la maquette 2 colonnes (CONNEXION | ENREGISTRER), fond clair thème-aware
+- [x] Il manque la possibilité de supprimer un profil ou un groupe
+- [x] Il faudrait pouvoir drag les groupes pour positionner les éléments dans l'ordre qu'on veut, pareil pour les profils au sein d'un groupe
+- [x] Le bouton "+ Groupe" crée maintenant un vrai groupe inline (plus la modale)
+- [x] Enlever le RO Garanti en haut à droite
+	- [x] "Connecté" conservé : porte les états reconnexion / déconnecté (utile en staging)
+- [x] Quand on change de query manuel, le résultat est reset (remount par onglet)
+- [x] Quand on fait + Row, la ligne apparaît en haut sous l'en-tête (visible)
+- [x] Un nouveau filtre sans valeur n'est plus appliqué tant qu'il est incomplet
+	- [x] Les filtres persistent en changeant de sous-vue (Data ↔ Structure ↔ Relations)
+- [x] Enlever la phrase "drag a profile into a frame to group it"
+- [x] Sur la vue relation, bouton "+N colonnes" pour afficher toutes les colonnes
+- [x] Les filtres sont séparés par table (stockés par tableName dans le store)
+- [x] (nouveau) Vue relations : les tables sont déplaçables (defaultNodes non contrôlés)
+- [x] Mettre un modal de confirmation quand je supprime une connexion (aussi pour un groupe non vide)
+- [x] Quand je fais une nouvelle connexion et que le groupe n'existe pas encore,  je peux en créer un directement depuis l'input (champ groupe = input + suggestions)
+- [x] Je n'arrive pas à drag un profil d'un groupe A dans le groupe B — cause : Tauri interceptait le drag & drop HTML5 (`dragDropEnabled` désactivé dans tauri.conf.json)
+	- [x] Je n'arrive pas à drag un groupe A avant le groupe B (même cause)
+- [x] Double cliquer sur un profil doit directement nous connecter
+- [x] Tester sur un profil enregistré ne fait rien (le bouton Test du détail n'avait pas de onClick — câblé sur le vrai test de connexion)
+- [x] L'icône de l'app est carré et ne respecte pas l'icône des app Mac (gabarit Apple : carré arrondi 824px sur canvas 1024 transparent, régénérée via `npx tauri icon`)
+- [x] Les boutons macs ne sont pas alignés correctement pas avec le titre (`trafficLightPosition` centré sur la barre de 44px)
+- [x] Gérer le CMD Z / CMD SHIFT Z pour undo/redo dans la modification des données directement dans les cellules (undo/redo des édits/insertions/suppressions staged)
+- [x] Handle le CMD W pour close le tab dans l'application (menu natif custom ; ⌘W sans onglet ou ⌘Q/fermeture fenêtre → modale de confirmation, désactivable dans Réglages → Général)
+- [x] Côté PSQL : si une valeur est de type boolean, il faut afficher TRUE ou FALSE au lieu de t ou f (normalisé en vrai booléen, affiché true/false)
+- [x] Côté autocomplete sur une query manuel, si je commence à écrire '"', il faut proposer toutes les tables en autocomplete et pas les colonnes surtout après un FROM (insertion quotée `"table"`)
+- [~] N'importe quel action (tester si le lien marche, se connecter au profil) demande la permission au trousseau — la clé maîtresse est maintenant mise en cache par lancement (1 seule demande au démarrage au lieu d'une par action). La demande à chaque **rebuild** restera tant que le build dev est signé ad hoc (signature qui change à chaque compilation) ; le vrai fix est une identité de signature stable (prévu avec la distribution). C'est aussi pour ça que « Toujours autoriser » ne tient pas : macOS lie l'autorisation à la signature du binaire, qui change à chaque build dev.
+- [x] Quand je clique sur une FK, ça m'enmène vers la relation mais ça ne filtre pas le résultat avec l'id que j'ai appuyé — corrigé (probablement après ton essai) : le clic ouvre maintenant la table cible **filtrée sur la ligne liée** (ex. `customer_id = 44` → table users avec filtre `id = '44'`, vérifié par test navigateur). L'app dev s'est relancée depuis — à re-tester.
+- [x] Le bouton quitter dans la modale être sûr de quitter l'app ne fonctionne pas — cause : la permission Tauri `core:window:allow-destroy` manquait dans `capabilities/default.json` (le set par défaut ne contient que des lectures), l'appel `destroy()` était rejeté en silence. Permission ajoutée ; l'app dev s'est recompilée — à re-tester.
+- [x] Les options du sélecteur ne sont pas lisibles ![[Pasted image 20260717231834.png]] — cause : le popup natif du `<datalist>` suit le thème système (sombre) dans le webview alors que l'app est claire → texte blanc sur fond blanc, non stylable en CSS. Remplacé par un dropdown de suggestions custom aux couleurs de l'app (filtrage en tapant, clic pour choisir).
+- [x] Pourquoi l'option "Ouvrir un fichier SQLite" est lisible pour les bases qui n'ont pas le moteur SQLite ? e.g Postgress — le bouton n'apparaît plus que quand le profil actif est SQLite (on peut toujours ouvrir un fichier depuis la modale Nouvelle connexion → Parcourir).
+- [ ] Lorsque je suis dans par exemple "Relations" et que je change de table, il faut rester dans la même vue au lieu de me mettre dans dans Données
+- [ ] Pouvoir copier le nom de table, mettre un bouton avec juste une icône à gauche dans vue listing
