@@ -482,6 +482,7 @@ export async function fetchAudit(): Promise<AuditState | null> {
       requestType: e.action,
       at: new Date(e.at * 1000).toISOString(),
       outcome: toAuditOutcome(e.outcome),
+      detail: e.detail,
     })),
   };
 }

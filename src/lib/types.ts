@@ -175,6 +175,7 @@ export interface AuditEntry {
   requestType: string;
   at: string;
   outcome: "approved" | "rejected" | "executed" | "read" | "pending" | "failed";
+  detail?: string;
 }
 
 export interface EditorTab {
