@@ -27,6 +27,8 @@ export interface BackendProfile {
   read_only: boolean;
   agent_access: boolean;
   save_password: boolean;
+  has_password: boolean;
+  has_ssh_secret: boolean;
 }
 
 export interface BackendColumnMeta {
@@ -188,6 +190,8 @@ export function toConnectionProfile(p: BackendProfile): ConnectionProfile {
     readOnlyBadge: READ_ONLY_BADGES[engine],
     state: "connected",
     savePassword: p.save_password,
+    hasPassword: p.has_password,
+    hasSshSecret: p.has_ssh_secret,
   };
 }
 
@@ -212,6 +216,8 @@ export function toBackendProfile(p: ConnectionProfile): BackendProfile {
     read_only: p.readOnly,
     agent_access: p.agentAccess,
     save_password: p.savePassword,
+    has_password: p.hasPassword ?? false,
+    has_ssh_secret: p.hasSshSecret ?? false,
   };
 }
 

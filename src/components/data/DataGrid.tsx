@@ -123,6 +123,13 @@ interface EditSnapshot {
 
 const UNDO_DEPTH = 50;
 const COPY_FLASH_MS = 1000;
+const AUTO_PK_VALUE = "auto";
+
+function insertCellLabel(v: CellValue, defaultExpr: string | null): string {
+  if (defaultExpr !== null) return defaultExpr;
+  if (v === null) return "NULL";
+  return String(v);
+}
 
 function clipboardText(v: CellValue): string {
   return v === null ? "NULL" : String(v);
@@ -158,6 +165,8 @@ export function DataGrid({
 
   const schema = useStore((s) => s.schema);
   const activeDatabase = useStore((s) => s.activeDatabase);
+  const insertRetry = useStore((s) => s.insertRetry);
+  const consumeInsertRetry = useStore((s) => s.consumeInsertRetry);
   const dataVersion = useStore((s) => s.dataVersion);
   const schemaTable = allTables(schema).find((x) => x.name === tableName);
   const cols: SchemaCol[] = schemaTable?.columns ?? [];
@@ -174,6 +183,7 @@ export function DataGrid({
   const [staged, setStaged] = useState<StagedCell[]>([]);
   const [inserts, setInserts] = useState<Record<string, CellValue>[]>([]);
   const [deletes, setDeletes] = useState<Set<number>>(new Set());
+  const [stageError, setStageError] = useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<EditSnapshot[]>([]);
   const [redoStack, setRedoStack] = useState<EditSnapshot[]>([]);
   const [selectedRow, setSelectedRow] = useState<number | null>(null);
@@ -188,6 +198,9 @@ export function DataGrid({
   const [editing, setEditing] = useState<{ row: number; col: string } | null>(
     null
   );
+  const [editingInsert, setEditingInsert] = useState<
+    { row: number; col: string } | null
+  >(null);
   const [editValue, setEditValue] = useState("");
   const [bigValue, setBigValue] = useState<{ col: string; value: string } | null>(
     null
@@ -231,6 +244,25 @@ export function DataGrid({
       alive = false;
     };
   }, [profile, tableName, sortColumn, sortDir, filters, rowLimit, statementTimeout, dataVersion, schemaTable?.schema, activeDatabase]);
+
+  // NOTE: effect required — a failed queue entry's "retry" payload arrives via
+  // the store and must be folded into this component's local insert state.
+  useEffect(() => {
+    // NOTE: re-read from the store — StrictMode re-runs the effect with the
+    // same stale closure, and only the fresh state shows the payload was
+    // already consumed (otherwise the row would be injected twice).
+    const pending = useStore.getState().insertRetry;
+    if (!pending || pending.table !== tableName) return;
+    const { values } = pending;
+    consumeInsertRetry();
+    setUndoStack((prev) => [
+      ...prev.slice(-(UNDO_DEPTH - 1)),
+      { staged, inserts, deletes },
+    ]);
+    setRedoStack([]);
+    setInserts((prev) => [values, ...prev]);
+    if (parentRef.current) parentRef.current.scrollTop = 0;
+  }, [insertRetry, tableName, consumeInsertRetry, staged, inserts, deletes]);
 
   // Apply staged updates to displayed rows.
   const displayRows = useMemo(() => {
@@ -331,7 +363,9 @@ export function DataGrid({
   // in progress: commit it, then send everything to the validation queue.
   function reviewNow() {
     const extra = stagedFromEditing();
+    const insertRows = insertsWithPendingEdit();
     commitEdit();
+    setEditingInsert(null);
     const cells = extra
       ? [
           ...staged.filter(
@@ -340,7 +374,10 @@ export function DataGrid({
           extra,
         ]
       : staged;
-    void reviewChanges(cells).catch((e) => console.error("staging failed", e));
+    void reviewChanges(cells, insertRows).catch((e) => {
+      console.error("staging failed", e);
+      setStageError(String(e));
+    });
   }
 
   // NOTE: ⌘Z/⇧⌘Z/⌘C arrive as keydown in the browser, but as
@@ -349,7 +386,8 @@ export function DataGrid({
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (!(e.metaKey || e.ctrlKey)) {
-        if (editing || isEditableTarget(document.activeElement)) return;
+        if (editing || editingInsert || isEditableTarget(document.activeElement))
+          return;
         if (
           (e.key === "Delete" || e.key === "Backspace") &&
           !readOnly &&
@@ -370,6 +408,7 @@ export function DataGrid({
         !e.altKey &&
         (selectedCell || selectedRow !== null) &&
         !editing &&
+        !editingInsert &&
         !isEditableTarget(document.activeElement) &&
         !window.getSelection()?.toString()
       ) {
@@ -448,17 +487,20 @@ export function DataGrid({
     setSelectedCell(null);
   }
 
+  function coerceForColumn(column: string, raw: string): CellValue {
+    const type = colType(column);
+    if (type === "integer" || type === "bigint" || type === "numeric") {
+      return raw === "" ? null : Number(raw);
+    }
+    if (type === "boolean") return raw === "true";
+    return raw;
+  }
+
   function stagedFromEditing(): StagedCell | null {
     if (!editing) return null;
     const ci = result.columns.findIndex((c) => c.name === editing.col);
     const oldValue = result.rows[editing.row]?.[ci] ?? null;
-    let newValue: CellValue = editValue;
-    const colType = result.columns[ci]?.type;
-    if (colType === "integer" || colType === "bigint" || colType === "numeric") {
-      newValue = editValue === "" ? null : Number(editValue);
-    } else if (colType === "boolean") {
-      newValue = editValue === "true";
-    }
+    const newValue = coerceForColumn(editing.col, editValue);
     if (String(oldValue) === String(newValue)) return null;
     const pkValue =
       result.rows[editing.row]?.[
@@ -510,20 +552,74 @@ export function DataGrid({
     setEditing(null);
   }
 
+  function startInsertEdit(row: number, column: string, value: CellValue) {
+    if (readOnly) return;
+    if (column === pkCol && value === AUTO_PK_VALUE) return;
+    setEditingInsert({ row, col: column });
+    setEditValue(value === null ? "" : String(value));
+  }
+
+  function applyInsertValue(row: number, column: string, value: CellValue) {
+    const existing = inserts[row];
+    const unset = !existing || !(column in existing);
+    if (unset || String(existing?.[column] ?? null) !== String(value)) {
+      pushUndo();
+      setInserts((prev) =>
+        prev.map((ins, i) => (i === row ? { ...ins, [column]: value } : ins))
+      );
+    }
+    setEditingInsert(null);
+  }
+
+  function commitInsertEdit() {
+    if (!editingInsert) return;
+    applyInsertValue(
+      editingInsert.row,
+      editingInsert.col,
+      coerceForColumn(editingInsert.col, editValue)
+    );
+  }
+
+  function setInsertNull() {
+    if (!editingInsert) return;
+    applyInsertValue(editingInsert.row, editingInsert.col, null);
+  }
+
+  // NOTE: mirrors `stagedFromEditing` for insert rows — ⌘S must include the
+  // insert cell still being edited, whose commit has not landed in state yet.
+  function insertsWithPendingEdit(): Record<string, CellValue>[] {
+    if (!editingInsert) return inserts;
+    const { row, col } = editingInsert;
+    return inserts.map((ins, i) =>
+      i === row ? { ...ins, [col]: coerceForColumn(col, editValue) } : ins
+    );
+  }
+
   // NOTE: `stagedCells` lets ⌘S include the cell still being edited — its
   // commit is a setState that has not landed in `staged` yet.
-  async function reviewChanges(stagedCells: StagedCell[] = staged) {
+  async function reviewChanges(
+    stagedCells: StagedCell[] = staged,
+    insertRows: Record<string, CellValue>[] = inserts
+  ) {
     if (!profile) return;
-    if (stagedCells.length + inserts.length + deletes.size === 0) return;
+    if (stagedCells.length + insertRows.length + deletes.size === 0) return;
+    setStageError(null);
     const real = isRealProfile(profile);
     const q = (n: string) => (real ? quoteIdent(n) : n);
     const target = real
       ? qualifiedTable(schemaTable?.schema, tableName)
       : tableName;
-    for (const ins of inserts) {
-      const colNames = cols.filter((c) => !c.primaryKey).map((c) => c.name);
+    for (const ins of insertRows) {
+      const colNames = cols
+        .filter(
+          (c) => c.name in ins && !(c.primaryKey && ins[c.name] === AUTO_PK_VALUE)
+        )
+        .map((c) => c.name);
       const vals = colNames.map((n) => sqlLiteral(ins[n] ?? null));
-      const sql = `INSERT INTO ${target} (${colNames.map(q).join(", ")})\nVALUES (${vals.join(", ")});`;
+      const sql =
+        colNames.length === 0
+          ? `INSERT INTO ${target} DEFAULT VALUES;`
+          : `INSERT INTO ${target} (${colNames.map(q).join(", ")})\nVALUES (${vals.join(", ")});`;
       await enqueue({
         origin: "human-ui",
         originLabel: t("grid.originInsert"),
@@ -537,6 +633,8 @@ export function DataGrid({
         affectedLabel: `1 ${t("common.row")}`,
         risk: profile.environment === "production" ? "high" : "low",
         targetObjects: [`public.${tableName}`],
+        table: tableName,
+        insertValues: ins,
       });
     }
     for (const rowIndex of deletes) {
@@ -601,14 +699,31 @@ export function DataGrid({
     setRedoStack([]);
   }
 
+  // NOTE: the database only fills a primary key that has a default/identity
+  // (or a SQLite integer rowid alias) — any other PK must be typed by the
+  // user, so it stays editable and goes into the INSERT.
+  function pkAutoGenerated(c: SchemaCol): boolean {
+    if (!profile || !isRealProfile(profile)) return true;
+    if (c.defaultValue) return true;
+    return (
+      profile.engine === "sqlite" &&
+      (c.type === "integer" || c.type === "bigint")
+    );
+  }
+
+  // NOTE: columns with a database default are left unset — they are omitted
+  // from the generated INSERT so the database applies the default itself
+  // (copying the default expression client-side would quote it as a string).
   function addRow() {
     const blank: Record<string, CellValue> = {};
     for (const c of cols) {
-      blank[c.name] = c.primaryKey
-        ? "auto"
-        : c.defaultValue
-          ? c.defaultValue.replace(/'/g, "")
-          : null;
+      if (c.primaryKey && pkAutoGenerated(c)) {
+        blank[c.name] = AUTO_PK_VALUE;
+      } else if (!c.primaryKey && c.defaultValue) {
+        continue;
+      } else {
+        blank[c.name] = null;
+      }
     }
     pushUndo();
     setInserts((prev) => [blank, ...prev]);
@@ -634,6 +749,7 @@ export function DataGrid({
   function discardAll() {
     pushUndo();
     resetStaged();
+    setStageError(null);
   }
 
   const stagedTotal = staged.length + inserts.length + deletes.size;
@@ -781,14 +897,53 @@ export function DataGrid({
                 +
               </div>
               {result.columns.map((c) => {
-                const v = ins[c.name];
+                const hasValue = c.name in ins;
+                const v = hasValue ? (ins[c.name] ?? null) : null;
+                const defaultExpr = hasValue
+                  ? null
+                  : (cols.find((sc) => sc.name === c.name)?.defaultValue ?? null);
+                const isEditing =
+                  editingInsert?.row === i && editingInsert?.col === c.name;
+                const locked =
+                  readOnly || (c.name === pkCol && v === AUTO_PK_VALUE);
                 return (
                   <div
                     key={c.name}
-                    className="flex items-center overflow-hidden border-r border-border/40 px-2 text-[12.5px] italic text-foreground/70 whitespace-nowrap"
+                    onDoubleClick={() => startInsertEdit(i, c.name, v)}
+                    className={cn(
+                      "flex items-center overflow-hidden border-r border-border/40 px-2 text-[12.5px] italic text-foreground/70 whitespace-nowrap",
+                      !locked && !isEditing && "cursor-cell"
+                    )}
                     style={{ width: table.getColumn(c.name)?.getSize() ?? 150 }}
                   >
-                    {v === null ? "NULL" : String(v)}
+                    {isEditing ? (
+                      <input
+                        autoFocus
+                        autoCorrect="off"
+                        spellCheck={false}
+                        value={editValue}
+                        onChange={(e) => setEditValue(e.target.value)}
+                        onBlur={commitInsertEdit}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") commitInsertEdit();
+                          if (e.key === "Escape") setEditingInsert(null);
+                          if (e.key === "n" && e.metaKey) {
+                            e.preventDefault();
+                            setInsertNull();
+                          }
+                        }}
+                        className="h-6 w-full rounded border border-brand bg-input-bg px-1 font-mono text-[12px] not-italic outline-none"
+                      />
+                    ) : (
+                      <span
+                        className={cn(
+                          "truncate",
+                          defaultExpr !== null && "text-muted-foreground"
+                        )}
+                      >
+                        {insertCellLabel(v, defaultExpr)}
+                      </span>
+                    )}
                   </div>
                 );
               })}
@@ -856,6 +1011,19 @@ export function DataGrid({
                       <ContextMenuItem onSelect={() => copyRow(vItem.index)}>
                         {t("grid.copyRow")}
                       </ContextMenuItem>
+                      {!readOnly && (
+                        <ContextMenuItem
+                          className={cn(
+                            !isDeleted &&
+                              "text-destructive focus:text-destructive"
+                          )}
+                          onSelect={() => toggleDelete(vItem.index)}
+                        >
+                          {isDeleted
+                            ? t("grid.restoreRow")
+                            : t("grid.deleteRow")}
+                        </ContextMenuItem>
+                      )}
                     </ContextMenuContent>
                   </ContextMenu>
                   {row.getVisibleCells().map((cell) => {
@@ -962,9 +1130,10 @@ export function DataGrid({
           <>
             <button
               onClick={() => {
-                void reviewChanges().catch((e) =>
-                  console.error("staging failed", e)
-                );
+                void reviewChanges().catch((e) => {
+                  console.error("staging failed", e);
+                  setStageError(String(e));
+                });
               }}
               className="flex items-center gap-1.5 rounded-md border border-warning/40 bg-warning/15 px-2.5 py-1 font-medium text-warning transition-colors hover:bg-warning/25"
             >
@@ -982,6 +1151,11 @@ export function DataGrid({
                   total: result.totalRows.toLocaleString(),
                 })
               : `${result.rowCount.toLocaleString()} ${t("common.rows")}`}
+          </span>
+        )}
+        {stageError && (
+          <span className="truncate text-destructive" title={stageError}>
+            {t("grid.stageFailed")} {stageError}
           </span>
         )}
         {fetchError && (
@@ -1004,7 +1178,7 @@ export function DataGrid({
         <AgentActivity />
       </div>
 
-      {editing && !readOnly && (
+      {(editing || editingInsert) && !readOnly && (
         <div className="pointer-events-none fixed bottom-12 left-1/2 -translate-x-1/2 rounded-md border border-border bg-elevated px-3 py-1.5 text-[11px] text-muted-foreground shadow-xl">
           Enter to stage · Esc to cancel · ⌘N to Set NULL
         </div>

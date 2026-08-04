@@ -8,6 +8,8 @@ import {
   X,
   ShieldCheck,
   AlertTriangle,
+  ChevronDown,
+  RotateCcw,
   ArrowRight,
   Clock,
 } from "lucide-react";
@@ -83,45 +85,87 @@ export function ValidationQueue() {
               {t("queue.recentlyResolved")}
             </h2>
             <div className="space-y-1.5">
-              {resolved.slice(0, 8).map((entry) => {
-                const succeeded =
-                  entry.status === "approved" || entry.status === "used";
-                return (
-                <div
-                  key={entry.id}
-                  className="flex items-center gap-2 rounded-md border border-border bg-panel px-3 py-2 text-[12px]"
-                >
-                  {succeeded ? (
-                    <Check className="h-3.5 w-3.5 text-success" />
-                  ) : (
-                    <X className="h-3.5 w-3.5 text-destructive" />
-                  )}
-                  <span
-                    className={cn(
-                      "font-medium",
-                      succeeded ? "text-success" : "text-destructive"
-                    )}
-                  >
-                    {entry.status === "used" ? t("queue.statusUsed") : entry.status}
-                  </span>
-                  <code className="truncate font-mono text-muted-foreground">
-                    {entry.sql.split("\n")[0]}
-                  </code>
-                  {entry.status === "failed" && entry.error && (
-                    <span
-                      className="ml-auto max-w-[40%] truncate text-destructive/80"
-                      title={entry.error}
-                    >
-                      {t("queue.failed")} · {entry.error}
-                    </span>
-                  )}
-                </div>
-                );
-              })}
+              {resolved.slice(0, 8).map((entry) => (
+                <ResolvedRow key={entry.id} entry={entry} />
+              ))}
             </div>
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function ResolvedRow({ entry }: { entry: QueueEntry }) {
+  const { t } = useTranslation();
+  const retryInsert = useStore((s) => s.retryInsert);
+  const activeProfileId = useStore((s) => s.activeProfileId);
+  const [expanded, setExpanded] = useState(false);
+  const succeeded = entry.status === "approved" || entry.status === "used";
+  const canRetry =
+    entry.status === "failed" &&
+    entry.table !== undefined &&
+    entry.insertValues !== undefined &&
+    entry.profileId === activeProfileId;
+
+  return (
+    <div className="overflow-hidden rounded-md border border-border bg-panel text-[12px]">
+      <button
+        type="button"
+        aria-expanded={expanded}
+        aria-label={t(expanded ? "queue.hideDetail" : "queue.showDetail")}
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-muted/40"
+      >
+        <ChevronDown
+          className={cn(
+            "h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform",
+            !expanded && "-rotate-90"
+          )}
+        />
+        {succeeded ? (
+          <Check className="h-3.5 w-3.5 shrink-0 text-success" />
+        ) : (
+          <X className="h-3.5 w-3.5 shrink-0 text-destructive" />
+        )}
+        <span
+          className={cn(
+            "shrink-0 font-medium",
+            succeeded ? "text-success" : "text-destructive"
+          )}
+        >
+          {entry.status === "used" ? t("queue.statusUsed") : entry.status}
+        </span>
+        <code className="truncate font-mono text-muted-foreground">
+          {entry.sql.split("\n")[0]}
+        </code>
+        {entry.status === "failed" && entry.error && (
+          <span className="ml-auto max-w-[40%] shrink-0 truncate text-destructive/80">
+            {t("queue.failed")} · {entry.error}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className="space-y-2 border-t border-border bg-muted/40 px-3 py-2.5">
+          <pre className="whitespace-pre-wrap break-words font-mono text-[12px] text-foreground/90">
+            {entry.sql}
+          </pre>
+          {entry.status === "failed" && entry.error && (
+            <p className="whitespace-pre-wrap break-words text-destructive">
+              {t("queue.failed")} · {entry.error}
+            </p>
+          )}
+          {canRetry && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => retryInsert(entry.id)}
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> {t("queue.retryInsert")}
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

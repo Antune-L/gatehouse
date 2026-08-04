@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Plus, X } from "lucide-react";
 import { useStore } from "@/store";
@@ -71,6 +72,15 @@ export function ProfileTabs() {
   const setActiveProfile = useStore((s) => s.setActiveProfile);
   const closeProfile = useStore((s) => s.closeProfile);
   const openConnectionsManager = useStore((s) => s.openConnectionsManager);
+  const reorderOpenProfiles = useStore((s) => s.reorderOpenProfiles);
+
+  const [draggedId, setDraggedId] = useState<string | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  function endDrag() {
+    setDraggedId(null);
+    setDropTargetId(null);
+  }
 
   const open = openProfileIds
     .map((id) => profiles.find((p) => p.id === id))
@@ -89,7 +99,36 @@ export function ProfileTabs() {
         <Plus className="h-4 w-4" />
       </button>
       {open.map((p) => (
-        <div key={p.id} className="group relative shrink-0">
+        <div
+          key={p.id}
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData("text/plain", p.id);
+            e.dataTransfer.effectAllowed = "move";
+            setDraggedId(p.id);
+          }}
+          onDragEnd={endDrag}
+          onDragOver={(e) => {
+            if (!draggedId || draggedId === p.id) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDropTargetId(p.id);
+          }}
+          onDragLeave={() => {
+            setDropTargetId((current) => (current === p.id ? null : current));
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            if (draggedId) reorderOpenProfiles(draggedId, p.id);
+            endDrag();
+          }}
+          className={cn(
+            "group relative shrink-0 cursor-grab rounded-lg active:cursor-grabbing",
+            draggedId === p.id && "opacity-40",
+            dropTargetId === p.id &&
+              "ring-2 ring-brand ring-offset-2 ring-offset-sidebar"
+          )}
+        >
           <button
             type="button"
             title={p.name}

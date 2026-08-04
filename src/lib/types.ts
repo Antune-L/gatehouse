@@ -28,6 +28,8 @@ export interface ConnectionProfile {
   readOnlyBadge: ReadOnlyBadge;
   state: ConnectionState;
   savePassword: boolean;
+  hasPassword?: boolean;
+  hasSshSecret?: boolean;
 }
 
 export type SqlType =
@@ -138,6 +140,8 @@ export interface QueueEntry {
   expiresAt: string;
   status: "pending" | "approved" | "used" | "rejected" | "failed";
   error?: string;
+  table?: string;
+  insertValues?: Record<string, CellValue>;
 }
 
 export interface HistoryEntry {

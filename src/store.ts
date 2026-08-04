@@ -66,6 +66,7 @@ export interface WorkspaceTab {
   subView?: TableSubView;
   sql?: string;
   dirty?: boolean;
+  pinned?: boolean;
 }
 
 export interface StagedEdit {
@@ -183,6 +184,7 @@ interface AppState {
   activeTabId: string | null;
 
   queue: QueueEntry[];
+  insertRetry: { table: string; values: Record<string, CellValue> } | null;
   history: HistoryEntry[];
   saved: SavedQuery[];
   mcpClients: McpClient[];
@@ -211,6 +213,7 @@ interface AppState {
   setSettingsSection: (s: string) => void;
   setActiveProfile: (id: string) => void;
   closeProfile: (id: string) => void;
+  reorderOpenProfiles: (fromId: string, toId: string) => void;
   setActiveDatabase: (db: string) => void;
   openConnectionDialog: (profileId?: string) => void;
   closeConnectionDialog: () => void;
@@ -231,6 +234,7 @@ interface AppState {
   openQueryTab: (sql?: string, title?: string) => void;
   setActiveTab: (id: string) => void;
   closeTab: (id: string) => void;
+  togglePinTab: (id: string) => void;
   setTableSubView: (id: string, sub: TableSubView) => void;
   updateTabSql: (id: string, sql: string) => void;
   setTableFilters: (tableName: string, filters: GuiFilter[]) => void;
@@ -238,6 +242,8 @@ interface AppState {
 
   approve: (id: string) => Promise<void>;
   reject: (id: string) => Promise<void>;
+  retryInsert: (id: string) => void;
+  consumeInsertRetry: () => void;
   enqueue: (entry: Omit<QueueEntry, "id" | "createdAt" | "expiresAt" | "status">) => Promise<void>;
   addHistory: (sql: string, rowCount: number, durationMs: number) => void;
   addSavedQuery: (name: string, sql: string) => void;
@@ -383,6 +389,7 @@ export const useStore = create<AppState>((set, get) => ({
   activeTabId: "t_default",
 
   queue: seedQueue,
+  insertRetry: null,
   history: seedHistory,
   saved: seedSaved,
   mcpClients: seedMcpClients,
@@ -657,6 +664,17 @@ export const useStore = create<AppState>((set, get) => ({
     });
     void get().refreshSchema();
   },
+  reorderOpenProfiles: (fromId, toId) => {
+    set((st) => {
+      const from = st.openProfileIds.indexOf(fromId);
+      const to = st.openProfileIds.indexOf(toId);
+      if (from === -1 || to === -1 || from === to) return {};
+      const openProfileIds = [...st.openProfileIds];
+      openProfileIds.splice(from, 1);
+      openProfileIds.splice(to, 0, fromId);
+      return { openProfileIds };
+    });
+  },
   setActiveDatabase: (db) => {
     const changed = get().activeDatabase !== db;
     set((st) =>
@@ -838,6 +856,19 @@ export const useStore = create<AppState>((set, get) => ({
         st.activeTabId === id ? (tabs[tabs.length - 1]?.id ?? null) : st.activeTabId;
       return { tabs, activeTabId };
     }),
+  // NOTE: pinned tabs always occupy the head of the array; the boundary index
+  // is both the end of the pinned group and the start of the unpinned one.
+  togglePinTab: (id) =>
+    set((st) => {
+      const tab = st.tabs.find((t) => t.id === id);
+      if (!tab) return {};
+      const rest = st.tabs.filter((t) => t.id !== id);
+      const boundary = rest.filter((t) => t.pinned).length;
+      const moved = { ...tab, pinned: !tab.pinned };
+      return {
+        tabs: [...rest.slice(0, boundary), moved, ...rest.slice(boundary)],
+      };
+    }),
   setTableSubView: (id, sub) =>
     set((st) => ({
       tabs: st.tabs.map((t) => (t.id === id ? { ...t, subView: sub } : t)),
@@ -915,6 +946,13 @@ export const useStore = create<AppState>((set, get) => ({
       ),
     }));
   },
+  retryInsert: (id) => {
+    const entry = get().queue.find((q) => q.id === id);
+    if (!entry?.table || !entry.insertValues) return;
+    set({ insertRetry: { table: entry.table, values: entry.insertValues } });
+    get().openTable(entry.table);
+  },
+  consumeInsertRetry: () => set({ insertRetry: null }),
   enqueue: async (entry) => {
     const { profiles, activeProfileId, activeDatabase } = get();
     const profile = profiles.find((p) => p.id === entry.profileId) ?? null;

@@ -1,6 +1,13 @@
 import { useTranslation } from "react-i18next";
-import { X, Plus, Table2, FileCode, Database as DbIcon } from "lucide-react";
+import { X, Plus, Pin, Table2, FileCode, Database as DbIcon } from "lucide-react";
 import { useStore, type TableSubView } from "@/store";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { DataGrid } from "@/components/data/DataGrid";
 import { StructureView } from "@/components/data/StructureView";
 import { RelationsView } from "@/components/data/RelationsView";
@@ -9,11 +16,17 @@ import { cn } from "@/lib/utils";
 
 const MIDDLE_MOUSE_BUTTON = 1;
 
+function scrollActiveTabIntoView(node: HTMLDivElement | null) {
+  node?.scrollIntoView({ inline: "nearest", block: "nearest" });
+}
+
 export function Workspace() {
+  const { t } = useTranslation();
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
   const setActiveTab = useStore((s) => s.setActiveTab);
   const closeTab = useStore((s) => s.closeTab);
+  const togglePinTab = useStore((s) => s.togglePinTab);
   const setTableSubView = useStore((s) => s.setTableSubView);
   const openQueryTab = useStore((s) => s.openQueryTab);
 
@@ -25,43 +38,63 @@ export function Workspace() {
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           return (
-            <div
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              onMouseDown={(e) => {
-                if (e.button === MIDDLE_MOUSE_BUTTON) e.preventDefault();
-              }}
-              onAuxClick={(e) => {
-                if (e.button !== MIDDLE_MOUSE_BUTTON) return;
-                e.preventDefault();
-                closeTab(tab.id);
-              }}
-              className={cn(
-                "group flex min-w-0 cursor-pointer items-center gap-1.5 border-r border-border px-3 text-[12.5px] transition-colors",
-                isActive
-                  ? "bg-background text-foreground"
-                  : "text-muted-foreground hover:bg-panel-2 hover:text-foreground"
-              )}
-            >
-              {tab.kind === "table" ? (
-                <Table2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <FileCode className="h-3.5 w-3.5 shrink-0 text-brand" />
-              )}
-              <span className="max-w-[160px] truncate">{tab.title}</span>
-              {tab.dirty && (
-                <span className="h-1.5 w-1.5 rounded-full bg-brand" />
-              )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  closeTab(tab.id);
-                }}
-                className="ml-1 rounded p-0.5 opacity-0 hover:bg-panel-2 group-hover:opacity-100"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
+            <ContextMenu key={tab.id}>
+              <ContextMenuTrigger asChild>
+                <div
+                  ref={isActive ? scrollActiveTabIntoView : null}
+                  onClick={() => setActiveTab(tab.id)}
+                  onMouseDown={(e) => {
+                    if (e.button === MIDDLE_MOUSE_BUTTON) e.preventDefault();
+                  }}
+                  onAuxClick={(e) => {
+                    if (e.button !== MIDDLE_MOUSE_BUTTON || tab.pinned) return;
+                    e.preventDefault();
+                    closeTab(tab.id);
+                  }}
+                  className={cn(
+                    "group flex shrink-0 cursor-pointer items-center gap-1.5 border-r border-border px-3 text-[12.5px] transition-colors",
+                    isActive
+                      ? "bg-background text-foreground"
+                      : "text-muted-foreground hover:bg-panel-2 hover:text-foreground"
+                  )}
+                >
+                  {tab.kind === "table" ? (
+                    <Table2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <FileCode className="h-3.5 w-3.5 shrink-0 text-brand" />
+                  )}
+                  <span className="max-w-[160px] truncate">{tab.title}</span>
+                  {tab.dirty && (
+                    <span className="h-1.5 w-1.5 rounded-full bg-brand" />
+                  )}
+                  {tab.pinned ? (
+                    <Pin className="ml-1 h-3 w-3 shrink-0 fill-current text-muted-foreground" />
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(tab.id);
+                      }}
+                      aria-label={t("common.close")}
+                      className="ml-1 rounded p-0.5 opacity-0 hover:bg-panel-2 group-hover:opacity-100"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  )}
+                </div>
+              </ContextMenuTrigger>
+              <ContextMenuContent>
+                <ContextMenuItem onSelect={() => togglePinTab(tab.id)}>
+                  <Pin />
+                  {tab.pinned ? t("editor.unpinTab") : t("editor.pinTab")}
+                </ContextMenuItem>
+                <ContextMenuSeparator />
+                <ContextMenuItem onSelect={() => closeTab(tab.id)}>
+                  <X />
+                  {t("common.close")}
+                </ContextMenuItem>
+              </ContextMenuContent>
+            </ContextMenu>
           );
         })}
         <button

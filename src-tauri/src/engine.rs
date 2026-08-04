@@ -75,7 +75,7 @@ pub struct TableSchema {
 pub enum EngineError {
     #[error("sqlite error: {0}")]
     Sqlite(#[from] rusqlite::Error),
-    #[error("postgres error: {0}")]
+    #[error("postgres error: {}", pg_error_text(.0))]
     Postgres(#[from] postgres::Error),
     #[error("mysql error: {0}")]
     MySql(#[from] mysql::Error),
@@ -481,6 +481,15 @@ pub fn sqlite_query(
 /// Write path — only ever reached through the validation queue after a human
 /// approval (Decisions §7/§10). One statement per call, enforced upstream by
 /// the classifier.
+/// Parse-only validation of a write statement. Uses the raw read-only open —
+/// the authorizer would deny preparing an INSERT — and never steps the
+/// statement; SQLITE_OPEN_READ_ONLY still guarantees nothing can be written.
+pub fn sqlite_validate(path: &str, sql: &str) -> Result<(), EngineError> {
+    let conn = open_sqlite_readonly_raw(path)?;
+    conn.prepare(sql)?;
+    Ok(())
+}
+
 pub fn sqlite_execute(path: &str, sql: &str) -> Result<ExecResult, EngineError> {
     let conn = Connection::open(path)?;
     match conn.execute(sql, []) {
@@ -546,15 +555,17 @@ pub fn pg_tls() -> Result<postgres_native_tls::MakeTlsConnector, EngineError> {
 
 fn pg_connect(t: &NetTarget, read_only: bool) -> Result<postgres::Client, EngineError> {
     let mut cfg = postgres::Config::new();
+    // NOTE: postgres::Config::port() appends to a one-port-per-host list —
+    // calling it twice with a single host is "invalid number of ports".
     cfg.host(&t.host)
-        .port(t.port)
+        .port(t.tcp.map_or(t.port, |(_, port)| port))
         .dbname(&t.dbname)
         .application_name("gatehouse")
         .connect_timeout(Duration::from_secs(NET_CONNECT_TIMEOUT_SECS));
-    if let Some((ip, port)) = t.tcp {
+    if let Some((ip, _)) = t.tcp {
         // TCP goes through the tunnel; `host` above still drives TLS
         // verification and SNI (Decisions §10: two distinct fields).
-        cfg.hostaddr(ip).port(port);
+        cfg.hostaddr(ip);
     }
     if t.user.is_empty() {
         // Local trust-auth servers (e.g. Homebrew) expect the OS user.
@@ -567,15 +578,19 @@ fn pg_connect(t: &NetTarget, read_only: bool) -> Result<postgres::Client, Engine
     if let Some(pw) = &t.password {
         cfg.password(pw);
     }
-    if read_only {
-        cfg.options("-c default_transaction_read_only=on");
-    }
-    if t.ssl {
+    let mut client = if t.ssl {
         cfg.ssl_mode(postgres::config::SslMode::Require);
-        Ok(cfg.connect(pg_tls()?)?)
+        cfg.connect(pg_tls()?)?
     } else {
-        Ok(cfg.connect(postgres::NoTls)?)
+        cfg.connect(postgres::NoTls)?
+    };
+    if read_only {
+        // NOTE: a post-connect SET instead of the startup `options` parameter —
+        // poolers like PgBouncer reject `options` ("unsupported startup
+        // parameter"). Session-level equivalent; still best-effort (§13).
+        client.simple_query("SET default_transaction_read_only = on")?;
     }
+    Ok(client)
 }
 
 fn map_pg_type(name: &str) -> &'static str {
@@ -606,6 +621,25 @@ pub fn pg_test(t: &NetTarget) -> Result<f64, EngineError> {
 
 /// A server-side cancellation (our cancel token or statement_timeout) must
 /// surface as Interrupted, like the SQLite path.
+// NOTE: postgres::Error's Display is just the error kind ("db error") — the
+// actual server message lives in the source chain, so surface it explicitly.
+fn pg_error_text(e: &postgres::Error) -> String {
+    if let Some(db) = e.as_db_error() {
+        let mut s = format!("{}: {}", db.severity(), db.message());
+        if let Some(detail) = db.detail() {
+            s.push_str(&format!(" — {detail}"));
+        }
+        if let Some(hint) = db.hint() {
+            s.push_str(&format!(" (hint: {hint})"));
+        }
+        return s;
+    }
+    match std::error::Error::source(e) {
+        Some(src) => format!("{e}: {src}"),
+        None => e.to_string(),
+    }
+}
+
 fn map_pg_err(e: postgres::Error) -> EngineError {
     if e.code() == Some(&postgres::error::SqlState::QUERY_CANCELED) {
         return EngineError::Interrupted;
@@ -762,7 +796,7 @@ fn pg_schema_on(client: &mut postgres::Client) -> Result<Vec<TableSchema>, Engin
     for r in simple_rows(
         client,
         &format!(
-            "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default
+            "SELECT table_schema, table_name, column_name, data_type, is_nullable, column_default, is_identity
              FROM information_schema.columns
              WHERE table_schema NOT IN {SYSTEM_SCHEMAS}
              ORDER BY table_schema, table_name, ordinal_position"
@@ -781,7 +815,13 @@ fn pg_schema_on(client: &mut postgres::Client) -> Result<Vec<TableSchema>, Engin
             col_type: map_pg_type(&cell(&r, 3)).to_string(),
             nullable: cell(&r, 4) == "YES",
             primary_key,
-            default_value: r.get(5).cloned().flatten(),
+            // NOTE: identity columns have no column_default — expose them as
+            // auto-generated anyway so the UI knows the server fills them.
+            default_value: r
+                .get(5)
+                .cloned()
+                .flatten()
+                .or_else(|| (cell(&r, 6) == "YES").then(|| "IDENTITY".to_string())),
             references,
             name,
         });
@@ -915,6 +955,26 @@ fn pg_query_on(
 
 /// Write path — only ever reached through the validation queue after a human
 /// approval, on a session WITHOUT the read-only default.
+/// Parse-only validation of a write statement: PREPARE via the extended
+/// protocol on the pooled read-only session. The statement is never executed,
+/// so the read-only guarantee holds — this catches syntax errors, missing
+/// tables/columns and invalid literal casts before the write is staged.
+pub fn pg_validate(t: &NetTarget, pool_key: &str, sql: &str) -> Result<(), EngineError> {
+    let mut lease = pg_checkout(pool_key, t)?;
+    let client = lease.conn();
+    match client.prepare(sql) {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            // NOTE: a server-reported error leaves the session clean; anything
+            // else (I/O, protocol) may have poisoned the pooled connection.
+            if e.as_db_error().is_none() {
+                lease.destroy();
+            }
+            Err(map_pg_err(e))
+        }
+    }
+}
+
 pub fn pg_execute(t: &NetTarget, sql: &str) -> Result<ExecResult, EngineError> {
     let mut client = pg_connect(t, false)?;
     let mut affected = 0usize;

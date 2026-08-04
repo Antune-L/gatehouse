@@ -16,6 +16,7 @@ export const SHORTCUT_IDS = [
   "next-tab",
   "cancel-query",
   "review-staged",
+  "pin-tab",
 ] as const;
 
 export type ShortcutId = (typeof SHORTCUT_IDS)[number];
@@ -34,6 +35,9 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   "next-tab": "Mod+Alt+ArrowRight",
   "cancel-query": "Mod+.",
   "review-staged": "Mod+S",
+  // NOTE: VS Code's real chord ⌘K ⇧↵ is out of reach for single-combo bindings,
+  // and plain Mod+P is taken by the command palette.
+  "pin-tab": "Mod+Alt+P",
 };
 
 const MODIFIER_NAMES = ["Mod", "Alt", "Shift"];

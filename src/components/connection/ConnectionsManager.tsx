@@ -322,6 +322,7 @@ function ProfileDetail({
     "idle"
   );
   const [testLatency, setTestLatency] = useState(0);
+  const [testError, setTestError] = useState("");
   const [copied, setCopied] = useState(false);
 
   const isSqlite = profile.engine === "sqlite";
@@ -367,6 +368,7 @@ function ProfileDetail({
 
   function runTest() {
     setTestState("testing");
+    setTestError("");
     if (!isRealProfile(profile)) {
       setTimeout(() => {
         setTestLatency(DEMO_TEST_LATENCY_MS);
@@ -376,6 +378,7 @@ function ProfileDetail({
     }
     void testProfileConnection(profile).then((r) => {
       setTestLatency(r.latencyMs);
+      setTestError(r.error ?? "");
       setTestState(r.ok ? "ok" : "fail");
     });
   }
@@ -527,7 +530,7 @@ function ProfileDetail({
       </div>
 
       <div className="flex items-center justify-end gap-2 border-t border-border px-6 py-4">
-        <div className="mr-auto text-[12.5px] text-muted-foreground">
+        <div className="mr-auto min-w-0 flex-1 pr-4 text-[12.5px] text-muted-foreground">
           {testState === "testing" && <span>{t("conn.testing")}</span>}
           {testState === "ok" && (
             <span className="flex items-center gap-1.5 text-success">
@@ -536,7 +539,10 @@ function ProfileDetail({
             </span>
           )}
           {testState === "fail" && (
-            <span className="text-destructive">{t("conn.testFail")}</span>
+            <span className="line-clamp-2 text-destructive" title={testError || undefined}>
+              {t("conn.testFail")}
+              {testError ? ` — ${testError}` : ""}
+            </span>
           )}
         </div>
         <Button variant="outline" onClick={() => openConnectionDialog(profile.id)}>

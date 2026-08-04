@@ -605,6 +605,24 @@ async fn cancel_query(state: State<'_, AppState>, query_id: String) -> Result<()
 
 /// Write path: classify, then enqueue for human approval. Agent callers only
 /// ever receive a request id + status (Decisions §10); agent access to the
+/// Pre-flight check at staging time: parse/plan the statement server-side
+/// without ever executing it, so a doomed write fails when the user clicks
+/// "Review" instead of after human approval.
+fn validate_write_sql(store: &Store, p: &Profile, sql: &str) -> Result<(), String> {
+    match p.engine.as_str() {
+        "sqlite" => {
+            engine::sqlite_validate(&expand_home(&p.database), sql).map_err(|e| e.to_string())
+        }
+        "postgres" => {
+            let t = resolve_read_target(store, p, None)?;
+            let key = engine::pool_key(&p.id, &t);
+            engine::pg_validate(&t, &key, sql).map_err(|e| e.to_string())
+        }
+        // TODO(ali): no parse-only validation path wired for mysql/mssql yet.
+        _ => Ok(()),
+    }
+}
+
 /// profile must be explicitly enabled.
 #[tauri::command]
 fn request_write(
@@ -633,6 +651,7 @@ fn request_write(
     if !c.is_write {
         return Err("This statement is read-only — run it directly via `query`.".into());
     }
+    validate_write_sql(&state.store, &profile, &sql)?;
     let kind = format!("{:?}", c.kind).to_lowercase();
     audit_log(
         &state,
@@ -1044,6 +1063,8 @@ mod ipc_tests {
             read_only: false,
             agent_access: false,
             save_password: false,
+            has_password: false,
+            has_ssh_secret: false,
         };
         store.upsert(&profile, None, None).unwrap();
 
@@ -1336,6 +1357,8 @@ fn seed_default_profiles(store: &Store) {
         // (Decisions §10, SEC-04).
         agent_access: false,
         save_password: false,
+        has_password: false,
+        has_ssh_secret: false,
     };
     let _ = store.upsert(&p, None, None);
 }

@@ -89,6 +89,7 @@ function ConnectionForm({
     "idle"
   );
   const [testLatency, setTestLatency] = useState(TEST_LATENCY_MS);
+  const [testError, setTestError] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [importValue, setImportValue] = useState("");
   const [importFailed, setImportFailed] = useState(false);
@@ -130,6 +131,7 @@ function ConnectionForm({
 
   function runTest() {
     setTestState("testing");
+    setTestError("");
     const candidate = buildProfile(editing?.id ?? "p_unsaved_test");
     if (isRealProfile(candidate)) {
       void testProfileConnection(
@@ -138,6 +140,7 @@ function ConnectionForm({
         sshSecret || undefined
       ).then((r) => {
         setTestLatency(r.latencyMs);
+        setTestError(r.error ?? "");
         setTestState(r.ok ? "ok" : "fail");
       });
       return;
@@ -303,6 +306,7 @@ function ConnectionForm({
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
+                      placeholder={editing?.hasPassword ? "••••••••" : undefined}
                       className="pr-9"
                     />
                     <button
@@ -313,6 +317,11 @@ function ConnectionForm({
                       {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
                   </div>
+                  {editing?.hasPassword && !password && (
+                    <p className="mt-1 text-[11.5px] text-muted-foreground">
+                      {t("conn.passwordStored")}
+                    </p>
+                  )}
                 </Field>
               </div>
 
@@ -352,8 +361,15 @@ function ConnectionForm({
                         type="password"
                         value={sshSecret}
                         onChange={(e) => setSshSecret(e.target.value)}
-                        placeholder={t("conn.sshSecretHint")}
+                        placeholder={
+                          editing?.hasSshSecret ? "••••••••" : t("conn.sshSecretHint")
+                        }
                       />
+                      {editing?.hasSshSecret && !sshSecret && (
+                        <p className="mt-1 text-[11.5px] text-muted-foreground">
+                          {t("conn.sshSecretStored")}
+                        </p>
+                      )}
                     </Field>
                   </div>
                   <Field label={t("conn.sshKeyPath")}>
@@ -469,7 +485,7 @@ function ConnectionForm({
 
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-border px-6 py-3">
-        <div className="text-[12.5px] text-muted-foreground">
+        <div className="min-w-0 flex-1 pr-4 text-[12.5px] text-muted-foreground">
           {testState === "ok" && (
             <span className="flex items-center gap-1.5 text-success">
               <span className="h-2 w-2 rounded-full bg-success" />
@@ -477,7 +493,10 @@ function ConnectionForm({
             </span>
           )}
           {testState === "fail" && (
-            <span className="text-destructive">{t("conn.testFail")}</span>
+            <span className="line-clamp-2 text-destructive" title={testError || undefined}>
+              {t("conn.testFail")}
+              {testError ? ` — ${testError}` : ""}
+            </span>
           )}
           {testState === "testing" && <span>{t("conn.testing")}</span>}
         </div>

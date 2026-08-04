@@ -583,6 +583,7 @@ const SHORTCUT_ROWS: { id: ShortcutId; labelKey: string }[] = [
   { id: "refresh-table", labelKey: "scRefresh" },
   { id: "prev-tab", labelKey: "scPrevTab" },
   { id: "next-tab", labelKey: "scNextTab" },
+  { id: "pin-tab", labelKey: "scPinTab" },
   { id: "cancel-query", labelKey: "scCancel" },
   { id: "review-staged", labelKey: "scReview" },
 ];
@@ -608,6 +609,10 @@ const SHORTCUT_LABELS: Record<string, { fr: string; en: string }> = {
   },
   scPrevTab: { fr: "Onglet précédent", en: "Previous tab" },
   scNextTab: { fr: "Onglet suivant", en: "Next tab" },
+  scPinTab: {
+    fr: "Épingler/désépingler l'onglet",
+    en: "Pin/unpin tab",
+  },
   scCancel: { fr: "Annuler la requête en cours", en: "Cancel running query" },
   scReview: {
     fr: "Envoyer les modifications de la grille en file de validation",

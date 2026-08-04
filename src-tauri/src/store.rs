@@ -37,6 +37,10 @@ pub struct Profile {
     pub read_only: bool,
     pub agent_access: bool,
     pub save_password: bool,
+    #[serde(default)]
+    pub has_password: bool,
+    #[serde(default)]
+    pub has_ssh_secret: bool,
 }
 
 fn default_ssh_port() -> u16 {
@@ -208,7 +212,7 @@ impl Store {
     pub fn list(&self) -> Result<Vec<Profile>, StoreError> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id,name,engine,grp,color,host,port,usr,database,environment,ssl,ssh_tunnel,ssh_host,ssh_port,ssh_user,ssh_key_path,read_only,agent_access,save_password FROM profiles ORDER BY grp,name",
+            "SELECT id,name,engine,grp,color,host,port,usr,database,environment,ssl,ssh_tunnel,ssh_host,ssh_port,ssh_user,ssh_key_path,read_only,agent_access,save_password,password_enc IS NOT NULL,ssh_secret_enc IS NOT NULL FROM profiles ORDER BY grp,name",
         )?;
         let rows = stmt
             .query_map([], |r| {
@@ -232,6 +236,8 @@ impl Store {
                     read_only: r.get::<_, i32>(16)? != 0,
                     agent_access: r.get::<_, i32>(17)? != 0,
                     save_password: r.get::<_, i32>(18)? != 0,
+                    has_password: r.get::<_, i32>(19)? != 0,
+                    has_ssh_secret: r.get::<_, i32>(20)? != 0,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
@@ -529,6 +535,8 @@ mod tests {
             read_only: false,
             agent_access: false,
             save_password: false,
+            has_password: false,
+            has_ssh_secret: false,
         };
         store.upsert(&profile, None, Some("passphrase")).unwrap();
         assert_eq!(store.ssh_secret("p_ssh").unwrap().unwrap(), "passphrase");

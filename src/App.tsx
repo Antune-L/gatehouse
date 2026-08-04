@@ -90,6 +90,12 @@ export default function App() {
         setSection("queue");
         return;
       }
+      if (matchesEvent(sc["pin-tab"], e)) {
+        if (!st.activeTabId) return;
+        e.preventDefault();
+        st.togglePinTab(st.activeTabId);
+        return;
+      }
       const prevTab = matchesEvent(sc["prev-tab"], e);
       if (prevTab || matchesEvent(sc["next-tab"], e)) {
         if (st.connectionsManagerOpen || st.tabs.length < 2) return;
